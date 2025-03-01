@@ -1723,6 +1723,7 @@ dependencies = [
  "leptos-use",
  "rand",
  "reactive_stores",
+ "wasm-bindgen",
  "web-sys",
 ]
 

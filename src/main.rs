@@ -142,14 +142,17 @@ impl Tetromino {
         }
     }
 
-    pub fn move_down(&mut self, pos: Position) {
-        let pos = pos - self.data.position;
-        if self.data.data.remove(&pos) {
-            console_log(&format!("move_down: position found: {:?}", pos));
-            self.data.data.insert(Position(pos.0, pos.1 + 1));
-        } else {
-            // console_log(&format!("move_down: position not found: {:?}", pos));
+    pub fn fall_down(&mut self, y: i32) {
+        let y = y - self.data.position.1;
+        let mut new_data = HashSet::new();
+        for pos in self.data.data.iter() {
+            if pos.1 < y {
+                new_data.insert(Position(pos.0, pos.1 + 1));
+            } else {
+                new_data.insert(*pos);
+            }
         }
+        self.data.data = new_data;
     }
 
     pub fn collect_positions(&self) -> Vec<Position> {
@@ -295,44 +298,39 @@ impl Tetris {
         if self.lost {
             return;
         }
-        let mut occupied = vec![vec![false; self.width as usize]; self.height as usize];
 
-        for block in &self.fixed_blocks {
-            for pos in &block.collect_positions() {
-                occupied[pos.1 as usize][pos.0 as usize] = true;
+        loop {
+            let mut occupied = vec![vec![false; self.width as usize]; self.height as usize];
+            for block in &self.fixed_blocks {
+                for pos in &block.collect_positions() {
+                    occupied[pos.1 as usize][pos.0 as usize] = true;
+                }
             }
-        }
 
-        let mut full_lines = occupied
-            .into_iter()
-            .enumerate()
-            .filter(|(_, row)| row.iter().all(|&c| c))
-            .map(|(i, _)| i)
-            .collect::<Vec<_>>();
+            let last_full_line = occupied
+                .into_iter()
+                .enumerate()
+                .filter(|(_, row)| row.iter().all(|&c| c))
+                .map(|(i, _)| i)
+                .last();
 
-        full_lines.sort_by(|a, b| b.cmp(a));
+            if last_full_line.is_none() {
+                break;
+            }
+            let last_full_line = last_full_line.unwrap();
+            console_log(&format!("last full line: {:?}", last_full_line));
+            self.score += 1;
 
-        self.score += full_lines.len() as i32;
-
-        if !full_lines.is_empty() {
-            console_log(&format!("full lines:{:?}", full_lines));
-        }
-
-        for line in full_lines {
             for block in &mut self.fixed_blocks {
                 for pos in block.collect_positions() {
-                    if pos.1 == line as i32 {
+                    if pos.1 == last_full_line as i32 {
                         block.remove_at(pos);
                     }
                 }
             }
 
             for block in &mut self.fixed_blocks {
-                for pos in block.collect_positions() {
-                    if pos.1 < line as i32 {
-                        block.move_down(pos);
-                    }
-                }
+                block.fall_down(last_full_line as i32);
             }
         }
     }
@@ -453,7 +451,7 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
         "S" => "red",
         "Z" => "cyan",
         "B" => "gray",
-        "G" => "lightgray",
+        "G" => "rgba(121, 119, 119, 0.76)",
         _ => unreachable!(),
     };
 
