@@ -1,7 +1,11 @@
-use std::io::{Read, stdin};
-use std::{collections::HashSet, ops::Add};
-
+use leptos::{leptos_dom::logging::console_log, prelude::*};
 use rand::Rng;
+use reactive_stores::Store;
+use std::{cell::RefCell, collections::HashSet, ops::Add, rc::Rc, sync::Arc, time::Duration};
+use web_sys::{
+    self,
+    wasm_bindgen::{JsCast, prelude::Closure},
+};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position(pub i32, pub i32);
@@ -37,7 +41,7 @@ impl Tetromino {
         match index {
             0 => {
                 kind = "I";
-                data.anchor = Position(3, 0);
+                data.anchor = Position(1, 0);
                 data.data = [
                     Position(0, 0),
                     Position(0, 1),
@@ -48,7 +52,7 @@ impl Tetromino {
             }
             1 => {
                 kind = "T";
-                data.anchor = Position(1, 0);
+                data.anchor = Position(0, 0);
                 data.data = [
                     Position(0, 0),
                     Position(1, 0),
@@ -70,7 +74,7 @@ impl Tetromino {
             }
             3 => {
                 kind = "J";
-                data.anchor = Position(2, 1);
+                data.anchor = Position(1, 1);
                 data.data = [
                     Position(1, 0),
                     Position(1, 1),
@@ -81,7 +85,7 @@ impl Tetromino {
             }
             4 => {
                 kind = "L";
-                data.anchor = Position(2, 1);
+                data.anchor = Position(0, 1);
                 data.data = [
                     Position(0, 0),
                     Position(0, 1),
@@ -92,7 +96,7 @@ impl Tetromino {
             }
             5 => {
                 kind = "S";
-                data.anchor = Position(2, 1);
+                data.anchor = Position(0, 0);
                 data.data = [
                     Position(1, 0),
                     Position(2, 0),
@@ -103,7 +107,7 @@ impl Tetromino {
             }
             6 => {
                 kind = "Z";
-                data.anchor = Position(2, 1);
+                data.anchor = Position(0, 0);
                 data.data = [
                     Position(0, 0),
                     Position(1, 0),
@@ -116,6 +120,19 @@ impl Tetromino {
         }
         data.position = pos;
         Tetromino { kind, data }
+    }
+
+    fn get_emoji(&self) -> char {
+        match self.kind {
+            "I" => '🟦',
+            "T" => '🟧',
+            "O" => '🟨',
+            "J" => '🟩',
+            "L" => '🟪',
+            "S" => '🟫',
+            "Z" => '🟥',
+            _ => unreachable!(),
+        }
     }
 
     pub fn collect_positions(&self) -> Vec<Position> {
@@ -143,7 +160,7 @@ impl Tetromino {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Store)]
 pub struct Tetris {
     pub width: u32,
     pub height: u32,
@@ -160,20 +177,35 @@ impl Tetris {
             height,
             fixed_blocks: vec![],
             speed: 1,
-            current_tetromino: Some(Tetromino::new_random(Position((width - 4) as i32 / 2, 8))),
+            current_tetromino: Some(Tetromino::new_random(Position((width - 4) as i32 / 2, 2))),
         }
+    }
+
+    pub fn render_view(&self) -> Vec<Vec<char>> {
+        let mut output = vec![vec![' '; self.width as usize]; self.height as usize];
+        for block in &self.fixed_blocks {
+            for pos in &block.collect_positions() {
+                output[pos.1 as usize][pos.0 as usize] = block.get_emoji();
+            }
+        }
+        if let Some(tetromino) = &self.current_tetromino {
+            for pos in tetromino.collect_positions() {
+                output[pos.1 as usize][pos.0 as usize] = tetromino.get_emoji();
+            }
+        }
+        output
     }
 
     pub fn render(&self) -> String {
         let mut output = vec![vec!['.'; self.width as usize]; self.height as usize];
         for block in &self.fixed_blocks {
             for pos in &block.collect_positions() {
-                output[pos.1 as usize][pos.0 as usize] = '#';
+                output[pos.1 as usize][pos.0 as usize] = block.get_emoji();
             }
         }
         if let Some(tetromino) = &self.current_tetromino {
             for pos in tetromino.collect_positions() {
-                output[pos.1 as usize][pos.0 as usize] = '#';
+                output[pos.1 as usize][pos.0 as usize] = tetromino.get_emoji();
             }
         }
         output
@@ -184,9 +216,10 @@ impl Tetris {
     }
 
     pub fn tick(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::sleep(std::time::Duration::from_millis(1000 / self.speed as u64));
-        // self.move_down();
-        self.rotate();
+        self.move_down();
+        // self.rotate();
     }
 
     pub fn move_down(&mut self) {
@@ -225,6 +258,46 @@ impl Tetris {
     }
 }
 
+#[component]
+fn App() -> impl IntoView {
+    let tetris = Arc::new(RefCell::new(Tetris::new(10, 20)));
+    let state = RwSignal::new_local(tetris);
+
+    let (board, set_board) = signal(vec![]);
+    let cb = move || {
+        state.with(|st| {
+            st.borrow_mut().tick();
+            set_board.set(st.borrow().render_view());
+        });
+    };
+    set_interval_with_handle(cb, Duration::from_millis(1000)).expect("failed to set interval");
+
+    Effect::new(move || {
+        // let window = web_sys::window().unwrap();
+        // let document = window.document().unwrap();
+    });
+
+    view! {
+        <div>
+        {move || {
+            board.get().iter().map(move |row| {
+                view! {
+                    <div class="row">
+                        {row.iter().map(|&c| { view! { <div class="cell">{c}</div> } }).collect::<Vec<_>>()}
+                    </div>
+                }
+            }).collect::<Vec<_>>()
+        }}
+        </div>
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    mount_to_body(|| view! { <App /> });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     let mut tetris = Tetris::new(10, 20);
     println!("{:?}", tetris.current_tetromino);
