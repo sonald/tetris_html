@@ -185,6 +185,7 @@ pub struct Tetris {
     pub height: u32,
 
     current_tetromino: Option<Tetromino>,
+    ghost_tetromino: Option<Tetromino>,
     fixed_blocks: Vec<Tetromino>,
     speed: i32,
 
@@ -200,6 +201,7 @@ impl Tetris {
             fixed_blocks: vec![],
             speed: 1,
             current_tetromino: Some(Tetromino::new_random(Position((width - 4) as i32 / 2, 0))),
+            ghost_tetromino: None,
             score: 0,
             lost: false,
         }
@@ -210,6 +212,11 @@ impl Tetris {
         for block in &self.fixed_blocks {
             for pos in &block.collect_positions() {
                 output[pos.1 as usize][pos.0 as usize] = block.kind;
+            }
+        }
+        if let Some(tetromino) = &self.ghost_tetromino {
+            for pos in tetromino.collect_positions() {
+                output[pos.1 as usize][pos.0 as usize] = "G";
             }
         }
         if let Some(tetromino) = &self.current_tetromino {
@@ -249,6 +256,7 @@ impl Tetris {
             return;
         }
         self.translate(Position(-1, 0));
+        self.udpate_ghost();
     }
 
     pub fn move_right(&mut self) {
@@ -256,6 +264,7 @@ impl Tetris {
             return;
         }
         self.translate(Position(1, 0));
+        self.udpate_ghost();
     }
 
     // down to the bottom
@@ -274,6 +283,7 @@ impl Tetris {
                     self.lost = true;
                 }
                 self.current_tetromino = Some(next);
+                self.udpate_ghost();
                 self.clear_lines();
                 break;
             }
@@ -342,11 +352,25 @@ impl Tetris {
                 self.lost = true;
             }
             self.current_tetromino = Some(next);
+            self.ghost_tetromino = None;
         } else {
             self.current_tetromino = Some(new_tetromino);
+            self.udpate_ghost();
         }
 
         self.clear_lines();
+    }
+
+    pub fn udpate_ghost(&mut self) {
+        let mut next = self.current_tetromino.clone().unwrap();
+        loop {
+            next.data.position = next.data.position + Position(0, 1);
+            if self.is_oob(&next) || self.is_colliding(&next) {
+                next.data.position = next.data.position - Position(0, 1);
+                self.ghost_tetromino = Some(next);
+                break;
+            }
+        }
     }
 
     pub fn get_score(&self) -> i32 {
@@ -361,6 +385,7 @@ impl Tetris {
             return;
         }
         self.current_tetromino.replace(new_tetromino);
+        self.udpate_ghost();
     }
 
     pub fn is_oob(&self, t: &Tetromino) -> bool {
@@ -428,19 +453,20 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
         "S" => "red",
         "Z" => "cyan",
         "B" => "gray",
+        "G" => "lightgray",
         _ => unreachable!(),
     };
 
     view! {
-        <div class="flex flex-col items-center justify-center">
+        <div class="flex flex-col items-center justify-center h-full">
         {move || {
             board.get().iter().map(move |row| {
                 view! {
-                    <div class="row flex flex-row">
+                    <div class="row flex flex-row h-[calc(100%/25)]">
                         {row.iter().map(|&c| {
                              view! {
                                 <div
-                                    class="cell"
+                                    class="cell aspect-square"
                                     style:background-color=move || kind2color(c) >
                                 </div>
                             }
@@ -461,10 +487,12 @@ fn App() -> impl IntoView {
     view! {
         <div class="flex flex-row h-screen w-screen place-content-center gap-4">
             <TetrisGame restart=restart set_score=set_score />
-            <div class="flex flex-col gap-4 justify-center items-center">
-                <div class="badge badge-soft badge-accent"> Scores: {score} </div>
-                <div class="badge badge-soft badge-primary"> Level: 1 </div>
-                <div class="basis-[40vh]"> Tetris </div>
+            <div class="flex flex-col h-full justify-between py-4">
+                <div class="flex flex-col gap-4 items-center">
+                    <div class="badge badge-soft badge-accent"> Scores: {score} </div>
+                    <div class="badge badge-soft badge-primary"> Level: 1 </div>
+                    <div> Tetris </div>
+                </div>
                 <div class="btn btn-neutral" on:click=move |_| set_restart.set(true)> Restart </div>
             </div>
         </div>

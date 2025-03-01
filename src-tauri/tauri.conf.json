@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "Tetris",
-        "width": 800,
-        "height": 600,
+        "width": 300,
+        "height": 400,
         "resizable": true,
         "fullscreen": false
       }
