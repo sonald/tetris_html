@@ -1,10 +1,12 @@
-use leptos::{leptos_dom::logging::console_log, prelude::*};
+use leptos::{ev, leptos_dom::logging::console_log, prelude::*};
 use rand::Rng;
 use reactive_stores::Store;
-use std::{cell::RefCell, collections::HashSet, ops::Add, rc::Rc, sync::Arc, time::Duration};
-use web_sys::{
-    self,
-    wasm_bindgen::{JsCast, prelude::Closure},
+use std::{
+    cell::RefCell,
+    collections::HashSet,
+    ops::{Add, Sub},
+    sync::Arc,
+    time::Duration,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -15,6 +17,14 @@ impl Add<Position> for Position {
 
     fn add(self, other: Position) -> Position {
         Position(self.0 + other.0, self.1 + other.1)
+    }
+}
+
+impl Sub<Position> for Position {
+    type Output = Position;
+
+    fn sub(self, other: Position) -> Position {
+        Position(self.0 - other.0, self.1 - other.1)
     }
 }
 
@@ -135,6 +145,23 @@ impl Tetromino {
         }
     }
 
+    pub fn remove_at(&mut self, pos: Position) {
+        let pos = pos - self.data.position;
+        if !self.data.data.remove(&pos) {
+            console_log(&format!("remove_at: position not found: {:?}", pos));
+        }
+
+        let mut new_data = HashSet::new();
+        for p in &self.data.data {
+            if p.1 < pos.1 {
+                new_data.insert(Position(p.0, p.1 + 1));
+            } else {
+                new_data.insert(*p);
+            }
+        }
+        self.data.data = new_data;
+    }
+
     pub fn collect_positions(&self) -> Vec<Position> {
         self.data
             .data
@@ -197,17 +224,7 @@ impl Tetris {
     }
 
     pub fn render(&self) -> String {
-        let mut output = vec![vec!['.'; self.width as usize]; self.height as usize];
-        for block in &self.fixed_blocks {
-            for pos in &block.collect_positions() {
-                output[pos.1 as usize][pos.0 as usize] = block.get_emoji();
-            }
-        }
-        if let Some(tetromino) = &self.current_tetromino {
-            for pos in tetromino.collect_positions() {
-                output[pos.1 as usize][pos.0 as usize] = tetromino.get_emoji();
-            }
-        }
+        let output = self.render_view();
         output
             .into_iter()
             .map(|row| row.into_iter().collect::<String>())
@@ -219,7 +236,67 @@ impl Tetris {
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::sleep(std::time::Duration::from_millis(1000 / self.speed as u64));
         self.move_down();
-        // self.rotate();
+    }
+
+    fn translate(&mut self, pos: Position) {
+        let mut new_tetromino = self.current_tetromino.clone().unwrap();
+        new_tetromino.data.position = new_tetromino.data.position + pos;
+        if self.is_oob(&new_tetromino) || self.is_colliding(&new_tetromino) {
+            return;
+        }
+        self.current_tetromino.replace(new_tetromino);
+    }
+
+    pub fn move_left(&mut self) {
+        self.translate(Position(-1, 0));
+    }
+
+    pub fn move_right(&mut self) {
+        self.translate(Position(1, 0));
+    }
+
+    // down to the bottom
+    pub fn speed_up(&mut self) {
+        let mut new_tetromino = self.current_tetromino.clone().unwrap();
+        loop {
+            let mut next = new_tetromino.clone();
+            next.data.position = next.data.position + Position(0, 1);
+            if self.is_oob(&next) || self.is_colliding(&next) {
+                break;
+            }
+            new_tetromino = next;
+        }
+
+        self.current_tetromino.replace(new_tetromino);
+    }
+
+    fn clear_lines(&mut self) {
+        let mut occupied = vec![vec![false; self.width as usize]; self.height as usize];
+
+        for block in &self.fixed_blocks {
+            for pos in &block.collect_positions() {
+                occupied[pos.1 as usize][pos.0 as usize] = true;
+            }
+        }
+
+        let full_lines = occupied
+            .into_iter()
+            .enumerate()
+            .filter(|(_, row)| row.iter().all(|&c| c))
+            .map(|(i, _)| i)
+            .collect::<HashSet<_>>();
+
+        if !full_lines.is_empty() {
+            console_log(&format!("{:?}", full_lines));
+        }
+
+        for block in &mut self.fixed_blocks {
+            for pos in block.collect_positions() {
+                if full_lines.contains(&(pos.1 as usize)) {
+                    block.remove_at(pos);
+                }
+            }
+        }
     }
 
     pub fn move_down(&mut self) {
@@ -235,6 +312,8 @@ impl Tetris {
         } else {
             self.current_tetromino = Some(new_tetromino);
         }
+
+        self.clear_lines();
     }
 
     pub fn rotate(&mut self) {
@@ -271,11 +350,46 @@ fn App() -> impl IntoView {
         });
     };
     set_interval_with_handle(cb, Duration::from_millis(1000)).expect("failed to set interval");
-
-    Effect::new(move || {
-        // let window = web_sys::window().unwrap();
-        // let document = window.document().unwrap();
+    window_event_listener(ev::keydown, move |e| {
+        // console_log(&format!("{:?}", e.code()));
+        match e.code().as_str() {
+            "ArrowUp" => {
+                state.with(|st| {
+                    st.borrow_mut().rotate();
+                    set_board.set(st.borrow().render_view());
+                });
+            }
+            "ArrowLeft" => {
+                state.with(|st| {
+                    st.borrow_mut().move_left();
+                    set_board.set(st.borrow().render_view());
+                });
+            }
+            "ArrowRight" => {
+                state.with(|st| {
+                    st.borrow_mut().move_right();
+                    set_board.set(st.borrow().render_view());
+                });
+            }
+            "ArrowDown" => {
+                state.with(|st| {
+                    st.borrow_mut().tick();
+                    set_board.set(st.borrow().render_view());
+                });
+            }
+            "Space" => {
+                state.with(|st| {
+                    st.borrow_mut().speed_up();
+                    set_board.set(st.borrow().render_view());
+                });
+            }
+            _ => {}
+        }
     });
+
+    // let window = web_sys::window().unwrap();
+    // let document = window.document().unwrap();
+    Effect::new(move || {});
 
     view! {
         <div>
@@ -294,11 +408,13 @@ fn App() -> impl IntoView {
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    console_error_panic_hook::set_once();
     mount_to_body(|| view! { <App /> });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    console_error_panic_hook::set_once();
     let mut tetris = Tetris::new(10, 20);
     println!("{:?}", tetris.current_tetromino);
     clear_screen();
