@@ -1,3 +1,4 @@
+use lazy_static::lazy_static;
 use leptos::{ev, leptos_dom::logging::console_log, prelude::*};
 use leptos_use::use_interval_fn;
 use rand::Rng;
@@ -32,13 +33,66 @@ impl Sub<Position> for Position {
 pub struct TetrominoData {
     pub position: Position,      // absolute position in the grid
     pub data: HashSet<Position>, // relative positions of the blocks
-    pub anchor: Position,        // relative position of the anchor block
 }
 
 #[derive(Debug, Clone)]
 pub struct Tetromino {
     pub kind: &'static str,
     pub data: TetrominoData,
+    rotation: usize,
+}
+
+macro_rules! place_it {
+    ($($pos:expr),*) => {
+        [$(Position($pos.0, $pos.1)),*].into()
+    };
+}
+
+lazy_static! {
+    static ref S_OPTS: [[HashSet<Position>; 4]; 7] = [
+        [
+            place_it!((1, 0), (1, 1), (1, 2), (1, 3)),
+            place_it!((0, 1), (1, 1), (2, 1), (3, 1)),
+            place_it!((2, 0), (2, 1), (2, 2), (2, 3)),
+            place_it!((0, 2), (1, 2), (2, 2), (3, 2)),
+        ],
+        [
+            place_it!((1, 0), (0, 1), (1, 1), (2, 1)),
+            place_it!((1, 0), (1, 1), (2, 1), (1, 2)),
+            place_it!((0, 1), (1, 1), (2, 1), (1, 2)),
+            place_it!((1, 0), (0, 1), (1, 1), (1, 2)),
+        ],
+        [
+            place_it!((1, 0), (2, 0), (1, 1), (2, 1)),
+            place_it!((1, 0), (2, 0), (1, 1), (2, 1)),
+            place_it!((1, 0), (2, 0), (1, 1), (2, 1)),
+            place_it!((1, 0), (2, 0), (1, 1), (2, 1)),
+        ],
+        [
+            place_it!((1, 0), (1, 1), (1, 2), (0, 2)),
+            place_it!((0, 0), (0, 1), (1, 1), (2, 1)),
+            place_it!((1, 0), (2, 0), (1, 1), (1, 2)),
+            place_it!((0, 1), (1, 1), (2, 1), (2, 2)),
+        ],
+        [
+            place_it!((1, 0), (1, 1), (1, 2), (2, 2)),
+            place_it!((0, 1), (1, 1), (2, 1), (0, 2)),
+            place_it!((0, 0), (1, 0), (1, 1), (1, 2)),
+            place_it!((0, 1), (1, 1), (2, 1), (2, 0)),
+        ],
+        [
+            place_it!((1, 0), (2, 0), (1, 1), (0, 1)),
+            place_it!((1, 0), (1, 1), (2, 1), (2, 2)),
+            place_it!((1, 0), (2, 0), (1, 1), (0, 1)),
+            place_it!((1, 0), (1, 1), (2, 1), (2, 2)),
+        ],
+        [
+            place_it!((0, 0), (1, 0), (1, 1), (2, 1)),
+            place_it!((1, 0), (1, 1), (0, 1), (0, 2)),
+            place_it!((0, 0), (1, 0), (1, 1), (2, 1)),
+            place_it!((1, 0), (1, 1), (0, 1), (0, 2)),
+        ],
+    ];
 }
 
 impl Tetromino {
@@ -46,90 +100,39 @@ impl Tetromino {
         let mut rng = rand::rng();
         let index = rng.random_range(0..7);
 
+        let rotation = 0;
         let kind;
         let mut data = TetrominoData::default();
         match index {
-            0 => {
-                kind = "I";
-                data.anchor = Position(1, 0);
-                data.data = [
-                    Position(0, 0),
-                    Position(0, 1),
-                    Position(0, 2),
-                    Position(0, 3),
-                ]
-                .into();
-            }
-            1 => {
-                kind = "T";
-                data.anchor = Position(0, 0);
-                data.data = [
-                    Position(0, 0),
-                    Position(1, 0),
-                    Position(2, 0),
-                    Position(1, 1),
-                ]
-                .into();
-            }
-            2 => {
-                kind = "O";
-                data.anchor = Position(0, 0);
-                data.data = [
-                    Position(0, 0),
-                    Position(1, 0),
-                    Position(0, 1),
-                    Position(1, 1),
-                ]
-                .into();
-            }
-            3 => {
-                kind = "J";
-                data.anchor = Position(1, 1);
-                data.data = [
-                    Position(1, 0),
-                    Position(1, 1),
-                    Position(1, 2),
-                    Position(0, 2),
-                ]
-                .into();
-            }
-            4 => {
-                kind = "L";
-                data.anchor = Position(0, 1);
-                data.data = [
-                    Position(0, 0),
-                    Position(0, 1),
-                    Position(0, 2),
-                    Position(1, 2),
-                ]
-                .into();
-            }
-            5 => {
-                kind = "S";
-                data.anchor = Position(0, 0);
-                data.data = [
-                    Position(1, 0),
-                    Position(2, 0),
-                    Position(1, 1),
-                    Position(0, 1),
-                ]
-                .into();
-            }
-            6 => {
-                kind = "Z";
-                data.anchor = Position(0, 0);
-                data.data = [
-                    Position(0, 0),
-                    Position(1, 0),
-                    Position(1, 1),
-                    Position(2, 1),
-                ]
-                .into();
-            }
+            0 => kind = "I",
+            1 => kind = "T",
+            2 => kind = "O",
+            3 => kind = "J",
+            4 => kind = "L",
+            5 => kind = "S",
+            6 => kind = "Z",
             _ => unreachable!(),
         }
         data.position = pos;
-        Tetromino { kind, data }
+        data.data = Tetromino::get_rotation_data(kind, rotation);
+        Tetromino {
+            kind,
+            data,
+            rotation,
+        }
+    }
+
+    pub fn get_rotation_data(kind: &str, rotation: usize) -> HashSet<Position> {
+        match kind {
+            "I" => S_OPTS[0][rotation].clone(),
+            "T" => S_OPTS[1][rotation].clone(),
+            "O" => S_OPTS[2][rotation].clone(),
+            "J" => S_OPTS[3][rotation].clone(),
+            "L" => S_OPTS[4][rotation].clone(),
+            "S" => S_OPTS[5][rotation].clone(),
+            "Z" => S_OPTS[6][rotation].clone(),
+            _ => unreachable!(),
+        }
     }
 
     pub fn remove_at(&mut self, pos: Position) {
@@ -166,10 +169,12 @@ impl Tetromino {
 
     pub fn rotated(&self) -> Self {
         let mut data = self.data.clone();
-        data.data = data.data.into_iter().map(|p| Position(-p.1, p.0)).collect();
+        let rotation = (self.rotation + 1) % 4;
+        data.data = Tetromino::get_rotation_data(self.kind, rotation);
         Self {
             kind: self.kind,
             data,
+            rotation,
         }
     }
 }
@@ -487,6 +492,7 @@ fn main() {
     }
 }
 
+#[allow(unused)]
 fn clear_screen() {
     print!("\x1b[2J");
 }

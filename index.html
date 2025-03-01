@@ -5,9 +5,13 @@
     <link data-trunk rel="tailwind-css" href="tailwind.css">
 
     <style>
+        :root {
+            --cell-size: calc(min(100vh, 100vw) / 28);
+        }
+
         .cell {
-            width: 20px;
-            height: 20px;
+            width: var(--cell-size);
+            height: var(--cell-size);
             /* background-color: #8e8989; */
             border: 1px solid #6d6d6d;
             box-sizing: border-box;
