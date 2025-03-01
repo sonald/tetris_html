@@ -7,7 +7,6 @@ use std::{
     collections::HashSet,
     ops::{Add, Sub},
     sync::Arc,
-    time::Duration,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,32 +132,6 @@ impl Tetromino {
         Tetromino { kind, data }
     }
 
-    fn get_emoji(&self) -> char {
-        match self.kind {
-            "I" => '🟦',
-            "T" => '🟧',
-            "O" => '🟨',
-            "J" => '🟩',
-            "L" => '🟪',
-            "S" => '🟫',
-            "Z" => '🟥',
-            _ => unreachable!(),
-        }
-    }
-
-    fn get_color(&self) -> &str {
-        match self.kind {
-            "I" => "blue",
-            "T" => "purple",
-            "O" => "yellow",
-            "J" => "green",
-            "L" => "orange",
-            "S" => "red",
-            "Z" => "cyan",
-            _ => unreachable!(),
-        }
-    }
-
     pub fn remove_at(&mut self, pos: Position) {
         let pos = pos - self.data.position;
         if !self.data.data.remove(&pos) {
@@ -172,7 +145,7 @@ impl Tetromino {
             console_log(&format!("move_down: position found: {:?}", pos));
             self.data.data.insert(Position(pos.0, pos.1 + 1));
         } else {
-            console_log(&format!("move_down: position not found: {:?}", pos));
+            // console_log(&format!("move_down: position not found: {:?}", pos));
         }
     }
 
@@ -209,6 +182,9 @@ pub struct Tetris {
     current_tetromino: Option<Tetromino>,
     fixed_blocks: Vec<Tetromino>,
     speed: i32,
+
+    score: i32,
+    lost: bool,
 }
 
 impl Tetris {
@@ -218,20 +194,22 @@ impl Tetris {
             height,
             fixed_blocks: vec![],
             speed: 1,
-            current_tetromino: Some(Tetromino::new_random(Position((width - 4) as i32 / 2, 2))),
+            current_tetromino: Some(Tetromino::new_random(Position((width - 4) as i32 / 2, 0))),
+            score: 0,
+            lost: false,
         }
     }
 
-    pub fn render_view(&self) -> Vec<Vec<char>> {
-        let mut output = vec![vec![' '; self.width as usize]; self.height as usize];
+    pub fn render_view(&self) -> Vec<Vec<&'static str>> {
+        let mut output = vec![vec!["B"; self.width as usize]; self.height as usize];
         for block in &self.fixed_blocks {
             for pos in &block.collect_positions() {
-                output[pos.1 as usize][pos.0 as usize] = block.get_emoji();
+                output[pos.1 as usize][pos.0 as usize] = block.kind;
             }
         }
         if let Some(tetromino) = &self.current_tetromino {
             for pos in tetromino.collect_positions() {
-                output[pos.1 as usize][pos.0 as usize] = tetromino.get_emoji();
+                output[pos.1 as usize][pos.0 as usize] = tetromino.kind;
             }
         }
         output
@@ -262,29 +240,46 @@ impl Tetris {
     }
 
     pub fn move_left(&mut self) {
+        if self.lost {
+            return;
+        }
         self.translate(Position(-1, 0));
     }
 
     pub fn move_right(&mut self) {
+        if self.lost {
+            return;
+        }
         self.translate(Position(1, 0));
     }
 
     // down to the bottom
     pub fn speed_up(&mut self) {
+        if self.lost {
+            return;
+        }
         let mut new_tetromino = self.current_tetromino.clone().unwrap();
         loop {
             let mut next = new_tetromino.clone();
             next.data.position = next.data.position + Position(0, 1);
             if self.is_oob(&next) || self.is_colliding(&next) {
+                self.fixed_blocks.push(new_tetromino);
+                let next = Tetromino::new_random(Position((self.width - 4) as i32 / 2, 0));
+                if self.is_colliding(&next) {
+                    self.lost = true;
+                }
+                self.current_tetromino = Some(next);
+                self.clear_lines();
                 break;
             }
             new_tetromino = next;
         }
-
-        self.current_tetromino.replace(new_tetromino);
     }
 
     fn clear_lines(&mut self) {
+        if self.lost {
+            return;
+        }
         let mut occupied = vec![vec![false; self.width as usize]; self.height as usize];
 
         for block in &self.fixed_blocks {
@@ -301,6 +296,8 @@ impl Tetris {
             .collect::<Vec<_>>();
 
         full_lines.sort_by(|a, b| b.cmp(a));
+
+        self.score += full_lines.len() as i32;
 
         if !full_lines.is_empty() {
             console_log(&format!("full lines:{:?}", full_lines));
@@ -326,20 +323,29 @@ impl Tetris {
     }
 
     pub fn move_down(&mut self) {
+        if self.lost {
+            return;
+        }
+
         let mut new_tetromino = self.current_tetromino.clone().unwrap();
         new_tetromino.data.position = new_tetromino.data.position + Position(0, self.speed);
         if self.is_oob(&new_tetromino) || self.is_colliding(&new_tetromino) {
             self.fixed_blocks
                 .push(self.current_tetromino.take().unwrap());
-            self.current_tetromino = Some(Tetromino::new_random(Position(
-                (self.width - 4) as i32 / 2,
-                0,
-            )));
+            let next = Tetromino::new_random(Position((self.width - 4) as i32 / 2, 0));
+            if self.is_colliding(&next) {
+                self.lost = true;
+            }
+            self.current_tetromino = Some(next);
         } else {
             self.current_tetromino = Some(new_tetromino);
         }
 
         self.clear_lines();
+    }
+
+    pub fn get_score(&self) -> i32 {
+        self.score
     }
 
     pub fn rotate(&mut self) {
@@ -364,15 +370,25 @@ impl Tetris {
 }
 
 #[component]
-fn App() -> impl IntoView {
-    let tetris = Arc::new(RefCell::new(Tetris::new(10, 20)));
+fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl IntoView {
+    let tetris = Arc::new(RefCell::new(Tetris::new(10, 25)));
     let state = RwSignal::new_local(tetris);
     let (board, set_board) = signal(vec![]);
+
+    Effect::new(move || {
+        if restart.get() {
+            state.with(|st| {
+                st.replace(Tetris::new(10, 25));
+                set_board.set(st.borrow().render_view());
+            });
+        }
+    });
 
     use_interval_fn(
         move || {
             state.with(|st| {
                 st.borrow_mut().tick();
+                set_score.set(st.borrow().get_score());
                 set_board.set(st.borrow().render_view());
             });
         },
@@ -381,54 +397,71 @@ fn App() -> impl IntoView {
 
     window_event_listener(ev::keydown, move |e| {
         // console_log(&format!("{:?}", e.code()));
-        match e.code().as_str() {
-            "ArrowUp" => {
-                state.with(|st| {
-                    st.borrow_mut().rotate();
-                    set_board.set(st.borrow().render_view());
-                });
+        state.with(|st| {
+            match e.code().as_str() {
+                "ArrowUp" => st.borrow_mut().rotate(),
+                "ArrowLeft" => st.borrow_mut().move_left(),
+                "ArrowRight" => st.borrow_mut().move_right(),
+                "ArrowDown" => st.borrow_mut().tick(),
+                "Space" => st.borrow_mut().speed_up(),
+                _ => return,
             }
-            "ArrowLeft" => {
-                state.with(|st| {
-                    st.borrow_mut().move_left();
-                    set_board.set(st.borrow().render_view());
-                });
-            }
-            "ArrowRight" => {
-                state.with(|st| {
-                    st.borrow_mut().move_right();
-                    set_board.set(st.borrow().render_view());
-                });
-            }
-            "ArrowDown" => {
-                state.with(|st| {
-                    st.borrow_mut().tick();
-                    set_board.set(st.borrow().render_view());
-                });
-            }
-            "Space" => {
-                state.with(|st| {
-                    st.borrow_mut().speed_up();
-                    set_board.set(st.borrow().render_view());
-                });
-            }
-            _ => {}
-        }
+
+            set_score.set(st.borrow().get_score());
+            set_board.set(st.borrow().render_view());
+        });
     });
 
     Effect::new(move || {});
 
+    let kind2color = |c| match c {
+        "I" => "blue",
+        "T" => "purple",
+        "O" => "yellow",
+        "J" => "green",
+        "L" => "orange",
+        "S" => "red",
+        "Z" => "cyan",
+        "B" => "gray",
+        _ => unreachable!(),
+    };
+
     view! {
-        <div>
+        <div class="flex flex-col items-center justify-center">
         {move || {
             board.get().iter().map(move |row| {
                 view! {
-                    <div class="row">
-                        {row.iter().map(|&c| { view! { <div class="cell">{c}</div> } }).collect::<Vec<_>>()}
+                    <div class="row flex flex-row">
+                        {row.iter().map(|&c| {
+                             view! {
+                                <div
+                                    class="cell"
+                                    style:background-color=move || kind2color(c) >
+                                </div>
+                            }
+                         }).collect::<Vec<_>>()}
                     </div>
                 }
             }).collect::<Vec<_>>()
         }}
+        </div>
+    }
+}
+
+#[component]
+fn App() -> impl IntoView {
+    let (restart, set_restart) = signal(false);
+    let (score, set_score) = signal(0);
+
+    view! {
+        <div class="flex flex-row h-screen w-screen place-content-center gap-4">
+            <TetrisGame restart=restart set_score=set_score />
+            <div class="flex flex-col gap-4 justify-center items-center">
+                <div class="badge badge-soft badge-accent"> Scores: {score} </div>
+                <div class="badge badge-soft badge-primary"> Level: 1 </div>
+                <div class="basis-[40vh]"> Tetris </div>
+                <div class="btn btn-neutral" on:click=move |_| set_restart.set(true)> Restart </div>
+            </div>
         </div>
     }
 }
@@ -442,7 +475,7 @@ fn main() {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     console_error_panic_hook::set_once();
-    let mut tetris = Tetris::new(10, 20);
+    let mut tetris = Tetris::new(10, 25);
     println!("{:?}", tetris.current_tetromino);
     clear_screen();
     println!("\n{}", tetris.render());

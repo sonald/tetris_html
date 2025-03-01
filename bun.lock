@@ -1,0 +1,13 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "devDependencies": {
+        "daisyui": "^5.0.9",
+      },
+    },
+  },
+  "packages": {
+    "daisyui": ["daisyui@5.0.9", "https://registry.npmmirror.com/daisyui/-/daisyui-5.0.9.tgz", {}, "sha512-RsaehHh45f+0shWgZZaOY09/8eOae2voRsqJCD71j9yrnYgcke0Nj5ys0ZxrW4SPcc4+q96kWyJu0Z8P1zZdoA=="],
+  }
+}
