@@ -1,4 +1,5 @@
 use leptos::{ev, leptos_dom::logging::console_log, prelude::*};
+use leptos_use::use_interval_fn;
 use rand::Rng;
 use reactive_stores::Store;
 use std::{
@@ -145,21 +146,34 @@ impl Tetromino {
         }
     }
 
+    fn get_color(&self) -> &str {
+        match self.kind {
+            "I" => "blue",
+            "T" => "purple",
+            "O" => "yellow",
+            "J" => "green",
+            "L" => "orange",
+            "S" => "red",
+            "Z" => "cyan",
+            _ => unreachable!(),
+        }
+    }
+
     pub fn remove_at(&mut self, pos: Position) {
         let pos = pos - self.data.position;
         if !self.data.data.remove(&pos) {
             console_log(&format!("remove_at: position not found: {:?}", pos));
         }
+    }
 
-        let mut new_data = HashSet::new();
-        for p in &self.data.data {
-            if p.1 < pos.1 {
-                new_data.insert(Position(p.0, p.1 + 1));
-            } else {
-                new_data.insert(*p);
-            }
+    pub fn move_down(&mut self, pos: Position) {
+        let pos = pos - self.data.position;
+        if self.data.data.remove(&pos) {
+            console_log(&format!("move_down: position found: {:?}", pos));
+            self.data.data.insert(Position(pos.0, pos.1 + 1));
+        } else {
+            console_log(&format!("move_down: position not found: {:?}", pos));
         }
-        self.data.data = new_data;
     }
 
     pub fn collect_positions(&self) -> Vec<Position> {
@@ -279,21 +293,33 @@ impl Tetris {
             }
         }
 
-        let full_lines = occupied
+        let mut full_lines = occupied
             .into_iter()
             .enumerate()
             .filter(|(_, row)| row.iter().all(|&c| c))
             .map(|(i, _)| i)
-            .collect::<HashSet<_>>();
+            .collect::<Vec<_>>();
+
+        full_lines.sort_by(|a, b| b.cmp(a));
 
         if !full_lines.is_empty() {
-            console_log(&format!("{:?}", full_lines));
+            console_log(&format!("full lines:{:?}", full_lines));
         }
 
-        for block in &mut self.fixed_blocks {
-            for pos in block.collect_positions() {
-                if full_lines.contains(&(pos.1 as usize)) {
-                    block.remove_at(pos);
+        for line in full_lines {
+            for block in &mut self.fixed_blocks {
+                for pos in block.collect_positions() {
+                    if pos.1 == line as i32 {
+                        block.remove_at(pos);
+                    }
+                }
+            }
+
+            for block in &mut self.fixed_blocks {
+                for pos in block.collect_positions() {
+                    if pos.1 < line as i32 {
+                        block.move_down(pos);
+                    }
                 }
             }
         }
@@ -341,15 +367,18 @@ impl Tetris {
 fn App() -> impl IntoView {
     let tetris = Arc::new(RefCell::new(Tetris::new(10, 20)));
     let state = RwSignal::new_local(tetris);
-
     let (board, set_board) = signal(vec![]);
-    let cb = move || {
-        state.with(|st| {
-            st.borrow_mut().tick();
-            set_board.set(st.borrow().render_view());
-        });
-    };
-    set_interval_with_handle(cb, Duration::from_millis(1000)).expect("failed to set interval");
+
+    use_interval_fn(
+        move || {
+            state.with(|st| {
+                st.borrow_mut().tick();
+                set_board.set(st.borrow().render_view());
+            });
+        },
+        1000,
+    );
+
     window_event_listener(ev::keydown, move |e| {
         // console_log(&format!("{:?}", e.code()));
         match e.code().as_str() {
@@ -387,8 +416,6 @@ fn App() -> impl IntoView {
         }
     });
 
-    // let window = web_sys::window().unwrap();
-    // let document = window.document().unwrap();
     Effect::new(move || {});
 
     view! {
