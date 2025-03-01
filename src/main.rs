@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use leptos::{ev, leptos_dom::logging::console_log, prelude::*};
-use leptos_use::use_interval_fn;
+use leptos_use::{use_event_listener, use_interval_fn};
 use rand::Rng;
 use reactive_stores::Store;
 use std::{
@@ -9,6 +9,8 @@ use std::{
     ops::{Add, Sub},
     sync::Arc,
 };
+
+use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position(pub i32, pub i32);
@@ -194,6 +196,7 @@ pub struct Tetris {
 
     score: i32,
     lost: bool,
+    paused: bool,
 }
 
 impl Tetris {
@@ -207,6 +210,7 @@ impl Tetris {
             ghost_tetromino: None,
             score: 0,
             lost: false,
+            paused: false,
         }
     }
 
@@ -242,7 +246,10 @@ impl Tetris {
     pub fn tick(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::sleep(std::time::Duration::from_millis(1000 / self.speed as u64));
-        self.move_down();
+
+        if !self.paused {
+            self.move_down();
+        }
     }
 
     fn translate(&mut self, pos: Position) {
@@ -395,6 +402,18 @@ impl Tetris {
     pub fn is_colliding(&self, t: &Tetromino) -> bool {
         self.fixed_blocks.iter().any(|b| b.is_colliding(t))
     }
+
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
 }
 
 #[component]
@@ -402,13 +421,62 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
     let tetris = Arc::new(RefCell::new(Tetris::new(10, 25)));
     let state = RwSignal::new_local(tetris);
     let (board, set_board) = signal(vec![]);
+    let (paused, set_paused) = signal(false);
 
     Effect::new(move || {
         if restart.get() {
             state.with(|st| {
                 st.replace(Tetris::new(10, 25));
                 set_board.set(st.borrow().render_view());
+                set_paused.set(false);
+                set_score.set(0);
             });
+        }
+    });
+
+    // Handle Tauri window focus events
+    Effect::new(move |_| {
+        let callback_focus_lost = move || {
+            state.get_untracked().borrow_mut().pause();
+            set_paused.set(true);
+        };
+        let callback_focus_gained = move || {
+            state.get_untracked().borrow_mut().resume();
+            set_paused.set(false);
+        };
+
+        // Register focus change event listeners with Tauri
+        match js_sys::Reflect::has(&js_sys::global(), &JsValue::from_str("__TAURI__")) {
+            Ok(true) => {
+                #[wasm_bindgen]
+                extern "C" {
+                    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
+                    fn listen(event: &str, handler: &JsValue) -> JsValue;
+                }
+
+                let callback_focus_lost =
+                    Closure::wrap(Box::new(callback_focus_lost) as Box<dyn FnMut()>);
+                let callback_focus_gained =
+                    Closure::wrap(Box::new(callback_focus_gained) as Box<dyn FnMut()>);
+
+                console_log("tauri detected,registering listeners");
+                listen("tauri://blur", callback_focus_lost.as_ref());
+                listen("tauri://focus", callback_focus_gained.as_ref());
+
+                // Prevent callbacks from being garbage collected
+                callback_focus_lost.forget();
+                callback_focus_gained.forget();
+            }
+            _ => {
+                let initial_focus = document().has_focus().unwrap_or_default();
+                set_paused.set(initial_focus);
+
+                let _ =
+                    use_event_listener(window(), leptos::ev::blur, move |_| callback_focus_lost());
+                let _ = use_event_listener(window(), leptos::ev::focus, move |_| {
+                    callback_focus_gained()
+                });
+            }
         }
     });
 
@@ -426,12 +494,25 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
     window_event_listener(ev::keydown, move |e| {
         // console_log(&format!("{:?}", e.code()));
         state.with(|st| {
+            if st.borrow().is_paused() && e.code().as_str() != "KeyP" {
+                return;
+            }
+
             match e.code().as_str() {
                 "ArrowUp" => st.borrow_mut().rotate(),
                 "ArrowLeft" => st.borrow_mut().move_left(),
                 "ArrowRight" => st.borrow_mut().move_right(),
                 "ArrowDown" => st.borrow_mut().tick(),
                 "Space" => st.borrow_mut().speed_up(),
+                "KeyP" => {
+                    if st.borrow().is_paused() {
+                        st.borrow_mut().resume();
+                        set_paused.set(false);
+                    } else {
+                        st.borrow_mut().pause();
+                        set_paused.set(true);
+                    }
+                }
                 _ => return,
             }
 
@@ -439,8 +520,6 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
             set_board.set(st.borrow().render_view());
         });
     });
-
-    Effect::new(move || {});
 
     let kind2color = |c| match c {
         "I" => "blue",
@@ -450,29 +529,37 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
         "L" => "orange",
         "S" => "red",
         "Z" => "cyan",
-        "B" => "gray",
+        "B" => "rgb(119, 119, 119)",
         "G" => "rgba(121, 119, 119, 0.76)",
         _ => unreachable!(),
     };
 
     view! {
-        <div class="flex flex-col items-center justify-center h-full">
-        {move || {
-            board.get().iter().map(move |row| {
-                view! {
-                    <div class="row flex flex-row h-[calc(100%/25)]">
-                        {row.iter().map(|&c| {
-                             view! {
-                                <div
-                                    class="cell aspect-square"
-                                    style:background-color=move || kind2color(c) >
-                                </div>
-                            }
-                         }).collect::<Vec<_>>()}
-                    </div>
-                }
-            }).collect::<Vec<_>>()
-        }}
+        <div class="flex flex-col items-center justify-center h-full relative">
+            {move || {
+                board.get().iter().map(move |row| {
+                    view! {
+                        <div class="row flex flex-row h-[calc(100%/25)]">
+                            {row.iter().map(|&c| {
+                                view! {
+                                    <div
+                                        class="cell aspect-square"
+                                        style:background-color=move || kind2color(c) >
+                                    </div>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </div>
+                    }
+                }).collect::<Vec<_>>()
+            }}
+
+            // Pause overlay
+            <div
+                class="absolute top-0 left-0 w-full h-full bg-black bg-opacity-70 flex items-center justify-center"
+                style:display=move || if paused.get() { "flex" } else { "none" }
+            >
+                <div class="text-white text-2xl font-bold">PAUSED</div>
+            </div>
         </div>
     }
 }
