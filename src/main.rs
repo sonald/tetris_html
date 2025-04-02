@@ -417,11 +417,26 @@ impl Tetris {
 }
 
 #[component]
-fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl IntoView {
+fn TetrisGame(
+    restart: ReadSignal<bool>,
+    set_score: WriteSignal<i32>,
+    btn_pressed: ReadSignal<&'static str>,
+) -> impl IntoView {
     let tetris = Arc::new(RefCell::new(Tetris::new(10, 25)));
     let state = RwSignal::new_local(tetris);
     let (board, set_board) = signal(vec![]);
     let (paused, set_paused) = signal(false);
+
+    Effect::new(move || {
+        state.with(|st| {
+            console_log(&format!("paused changed: {}", paused.get()));
+            if paused.get() {
+                st.borrow_mut().pause();
+            } else {
+                st.borrow_mut().resume();
+            }
+        });
+    });
 
     Effect::new(move || {
         if restart.get() {
@@ -436,14 +451,8 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
 
     // Handle Tauri window focus events
     Effect::new(move |_| {
-        let callback_focus_lost = move || {
-            state.get_untracked().borrow_mut().pause();
-            set_paused.set(true);
-        };
-        let callback_focus_gained = move || {
-            state.get_untracked().borrow_mut().resume();
-            set_paused.set(false);
-        };
+        let callback_focus_lost = move || set_paused.set(true);
+        let callback_focus_gained = move || set_paused.set(false);
 
         // Register focus change event listeners with Tauri
         match js_sys::Reflect::has(&js_sys::global(), &JsValue::from_str("__TAURI__")) {
@@ -452,6 +461,7 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
                 extern "C" {
                     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
                     fn listen(event: &str, handler: &JsValue) -> JsValue;
+
                 }
 
                 let callback_focus_lost =
@@ -459,7 +469,7 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
                 let callback_focus_gained =
                     Closure::wrap(Box::new(callback_focus_gained) as Box<dyn FnMut()>);
 
-                console_log("tauri detected,registering listeners");
+                console_log("tauri detected, registering listeners");
                 listen("tauri://blur", callback_focus_lost.as_ref());
                 listen("tauri://focus", callback_focus_gained.as_ref());
 
@@ -469,7 +479,8 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
             }
             _ => {
                 let initial_focus = document().has_focus().unwrap_or_default();
-                set_paused.set(initial_focus);
+                set_paused.set(!initial_focus);
+                console_log(&format!("initial focus: {}", initial_focus));
 
                 let _ =
                     use_event_listener(window(), leptos::ev::blur, move |_| callback_focus_lost());
@@ -491,14 +502,13 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
         1000,
     );
 
-    window_event_listener(ev::keydown, move |e| {
-        // console_log(&format!("{:?}", e.code()));
+    let click_handler = move |key: &str| {
         state.with(|st| {
-            if st.borrow().is_paused() && e.code().as_str() != "KeyP" {
+            if st.borrow().is_paused() && key != "KeyP" {
                 return;
             }
 
-            match e.code().as_str() {
+            match key {
                 "ArrowUp" => st.borrow_mut().rotate(),
                 "ArrowLeft" => st.borrow_mut().move_left(),
                 "ArrowRight" => st.borrow_mut().move_right(),
@@ -506,10 +516,10 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
                 "Space" => st.borrow_mut().speed_up(),
                 "KeyP" => {
                     if st.borrow().is_paused() {
-                        st.borrow_mut().resume();
+                        // st.borrow_mut().resume();
                         set_paused.set(false);
                     } else {
-                        st.borrow_mut().pause();
+                        // st.borrow_mut().pause();
                         set_paused.set(true);
                     }
                 }
@@ -519,6 +529,17 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
             set_score.set(st.borrow().get_score());
             set_board.set(st.borrow().render_view());
         });
+    };
+
+    window_event_listener(ev::keydown, move |e| {
+        // console_log(&format!("{:?}", e.code()));
+        click_handler(e.code().as_str());
+    });
+
+    Effect::new(move || {
+        if btn_pressed.get() != "" {
+            click_handler(btn_pressed.get());
+        }
     });
 
     let kind2color = |c| match c {
@@ -568,15 +589,22 @@ fn TetrisGame(restart: ReadSignal<bool>, set_score: WriteSignal<i32>) -> impl In
 fn App() -> impl IntoView {
     let (restart, set_restart) = signal(false);
     let (score, set_score) = signal(0);
+    let (btn_pressed, set_btn_pressed) = signal("");
 
     view! {
         <div class="flex flex-row h-screen w-screen place-content-center gap-4">
-            <TetrisGame restart=restart set_score=set_score />
+            <TetrisGame restart=restart set_score=set_score  btn_pressed=btn_pressed/>
             <div class="flex flex-col h-full justify-between py-4">
                 <div class="flex flex-col gap-4 items-center">
                     <div class="badge badge-soft badge-accent"> Scores: {score} </div>
                     <div class="badge badge-soft badge-primary"> Level: 1 </div>
-                    <div> Tetris </div>
+                </div>
+                <div class="grid grid-cols-3 gap-0">
+                    <div class="btn btn-sm col-span-1 col-start-2" on:click=move |_| set_btn_pressed.set("ArrowUp")>U</div>
+                    <div class="btn btn-sm col-span-1 col-start-1" on:click=move |_| set_btn_pressed.set("ArrowLeft")>L</div>
+                    <div class="btn btn-sm col-span-1" on:click=move |_| set_btn_pressed.set("ArrowDown")>D</div>
+                    <div class="btn btn-sm col-span-1" on:click=move |_| set_btn_pressed.set("ArrowRight")>R</div>
+                    <div class="btn btn-sm col-span-3" on:click=move |_| set_btn_pressed.set("Space")>Space</div>
                 </div>
                 <div class="btn btn-neutral" on:click=move |_| set_restart.set(true)> Restart </div>
             </div>
