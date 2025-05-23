@@ -4,6 +4,7 @@ use leptos_use::{use_event_listener, use_interval_fn};
 use rand::Rng;
 use reactive_stores::Store;
 use std::{
+    cmp::Reverse,
     cell::RefCell,
     collections::HashSet,
     ops::{Add, Sub},
@@ -11,6 +12,8 @@ use std::{
 };
 
 use wasm_bindgen::prelude::*;
+
+const ANIMATION_DURATION: u32 = 3;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position(pub i32, pub i32);
@@ -197,6 +200,8 @@ pub struct Tetris {
     score: i32,
     lost: bool,
     paused: bool,
+    lines_being_cleared: Option<Vec<usize>>,
+    animation_step: u32,
 }
 
 impl Tetris {
@@ -211,23 +216,76 @@ impl Tetris {
             score: 0,
             lost: false,
             paused: false,
+            lines_being_cleared: None,
+            animation_step: 0,
         }
     }
 
     pub fn render_view(&self) -> Vec<Vec<&'static str>> {
         let mut output = vec![vec!["B"; self.width as usize]; self.height as usize];
+
+        let lines_being_cleared_now = self.lines_being_cleared.as_ref();
+        let animation_active = lines_being_cleared_now.is_some() && self.animation_step < ANIMATION_DURATION;
+
         for block in &self.fixed_blocks {
             for pos in &block.collect_positions() {
-                output[pos.1 as usize][pos.0 as usize] = block.kind;
+                if pos.1 < 0 || pos.1 >= self.height as i32 || pos.0 < 0 || pos.0 >= self.width as i32 {
+                    continue; // Skip blocks outside the visible board, can happen during fall_down
+                }
+                let row_index = pos.1 as usize;
+                let col_index = pos.0 as usize;
+
+                if animation_active {
+                    if let Some(clearing_lines) = lines_being_cleared_now {
+                        if clearing_lines.contains(&row_index) {
+                            if self.animation_step % 2 == 1 {
+                                output[row_index][col_index] = "B"; // Flash to background
+                            } else {
+                                output[row_index][col_index] = block.kind; // Show original color
+                            }
+                        } else {
+                            output[row_index][col_index] = block.kind;
+                        }
+                    }
+                } else {
+                    output[row_index][col_index] = block.kind;
+                }
             }
         }
+
         if let Some(tetromino) = &self.ghost_tetromino {
             for pos in tetromino.collect_positions() {
+                 if pos.1 < 0 || pos.1 >= self.height as i32 || pos.0 < 0 || pos.0 >= self.width as i32 {
+                    continue;
+                }
+                // Ghost should not overwrite flashing lines
+                if animation_active {
+                    if let Some(clearing_lines) = lines_being_cleared_now {
+                        if clearing_lines.contains(&(pos.1 as usize)) {
+                            continue;
+                        }
+                    }
+                }
                 output[pos.1 as usize][pos.0 as usize] = "G";
             }
         }
+
         if let Some(tetromino) = &self.current_tetromino {
             for pos in tetromino.collect_positions() {
+                if pos.1 < 0 || pos.1 >= self.height as i32 || pos.0 < 0 || pos.0 >= self.width as i32 {
+                    continue;
+                }
+                // Current tetromino should not overwrite flashing lines either for consistency,
+                // though it's less likely to overlap if game logic prevents movement into clearing lines.
+                if animation_active {
+                     if let Some(clearing_lines) = lines_being_cleared_now {
+                        if clearing_lines.contains(&(pos.1 as usize)) {
+                            // If current piece is somehow on a line being cleared,
+                            // let the flashing take precedence.
+                            continue;
+                        }
+                    }
+                }
                 output[pos.1 as usize][pos.0 as usize] = tetromino.kind;
             }
         }
@@ -247,7 +305,42 @@ impl Tetris {
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::sleep(std::time::Duration::from_millis(1000 / self.speed as u64));
 
-        if !self.paused {
+        if self.paused {
+            return;
+        }
+
+        if let Some(mut lines_to_clear) = self.lines_being_cleared.clone() {
+            self.animation_step += 1;
+            if self.animation_step >= ANIMATION_DURATION {
+                lines_to_clear.sort_by_key(|&k| Reverse(k)); // Sort descending
+
+                for line_index in &lines_to_clear {
+                    for block in &mut self.fixed_blocks {
+                        // Collect positions to remove to avoid borrowing issues
+                        let positions_to_remove: Vec<Position> = block
+                            .collect_positions()
+                            .into_iter()
+                            .filter(|p| p.1 == *line_index as i32)
+                            .collect();
+                        for pos in positions_to_remove {
+                            block.remove_at(pos);
+                        }
+                    }
+                    for block in &mut self.fixed_blocks {
+                        block.fall_down(*line_index as i32);
+                    }
+                }
+
+                // Remove empty tetrominos
+                self.fixed_blocks.retain(|block| !block.data.data.is_empty());
+
+                self.lines_being_cleared = None;
+                self.animation_step = 0;
+                self.clear_lines(); // Check for new lines
+            }
+            // If animation is ongoing, but not yet finished, do nothing else.
+        } else {
+            // No animation, proceed with normal game logic
             self.move_down();
         }
     }
@@ -294,7 +387,9 @@ impl Tetris {
                 }
                 self.current_tetromino = Some(next);
                 self.udpate_ghost();
-                self.clear_lines();
+                if self.lines_being_cleared.is_none() {
+                    self.clear_lines();
+                }
                 break;
             }
             new_tetromino = next;
@@ -302,43 +397,29 @@ impl Tetris {
     }
 
     fn clear_lines(&mut self) {
-        if self.lost {
+        if self.lost || self.lines_being_cleared.is_some() {
             return;
         }
 
-        loop {
-            let mut occupied = vec![vec![false; self.width as usize]; self.height as usize];
-            for block in &self.fixed_blocks {
-                for pos in &block.collect_positions() {
-                    occupied[pos.1 as usize][pos.0 as usize] = true;
-                }
+        let mut occupied = vec![vec![false; self.width as usize]; self.height as usize];
+        for block in &self.fixed_blocks {
+            for pos in &block.collect_positions() {
+                occupied[pos.1 as usize][pos.0 as usize] = true;
             }
+        }
 
-            let last_full_line = occupied
-                .into_iter()
-                .enumerate()
-                .filter(|(_, row)| row.iter().all(|&c| c))
-                .map(|(i, _)| i)
-                .last();
+        let full_lines: Vec<usize> = occupied
+            .into_iter()
+            .enumerate()
+            .filter(|(_, row)| row.iter().all(|&c| c))
+            .map(|(i, _)| i)
+            .collect();
 
-            if last_full_line.is_none() {
-                break;
-            }
-            let last_full_line = last_full_line.unwrap();
-            console_log(&format!("last full line: {:?}", last_full_line));
-            self.score += 1;
-
-            for block in &mut self.fixed_blocks {
-                for pos in block.collect_positions() {
-                    if pos.1 == last_full_line as i32 {
-                        block.remove_at(pos);
-                    }
-                }
-            }
-
-            for block in &mut self.fixed_blocks {
-                block.fall_down(last_full_line as i32);
-            }
+        if !full_lines.is_empty() {
+            console_log(&format!("full_lines: {:?}", full_lines));
+            self.score += full_lines.len() as i32;
+            self.lines_being_cleared = Some(full_lines);
+            self.animation_step = 0;
         }
     }
 
@@ -363,7 +444,9 @@ impl Tetris {
             self.udpate_ghost();
         }
 
-        self.clear_lines();
+        if self.lines_being_cleared.is_none() {
+            self.clear_lines();
+        }
     }
 
     pub fn udpate_ghost(&mut self) {
@@ -508,21 +591,34 @@ fn TetrisGame(
                 return;
             }
 
+            // Allow pausing regardless of animation state
+            if key == "KeyP" {
+                if st.borrow().is_paused() {
+                    // st.borrow_mut().resume(); // resume() is handled by Effect on paused signal
+                    set_paused.set(false);
+                } else {
+                    // st.borrow_mut().pause(); // pause() is handled by Effect on paused signal
+                    set_paused.set(true);
+                }
+                // Update board and score after pause/resume in case state changed visually (e.g., pause overlay)
+                // This is good practice, though the interval_fn will also update it.
+                set_score.set(st.borrow().get_score());
+                set_board.set(st.borrow().render_view());
+                return; // Return early after handling pause
+            }
+
+            // If animation is in progress, ignore other game actions
+            if st.borrow().lines_being_cleared.is_some() {
+                return;
+            }
+
             match key {
                 "ArrowUp" => st.borrow_mut().rotate(),
                 "ArrowLeft" => st.borrow_mut().move_left(),
                 "ArrowRight" => st.borrow_mut().move_right(),
-                "ArrowDown" => st.borrow_mut().tick(),
+                "ArrowDown" => st.borrow_mut().tick(), // Note: tick() itself handles animation state and normal move_down
                 "Space" => st.borrow_mut().speed_up(),
-                "KeyP" => {
-                    if st.borrow().is_paused() {
-                        // st.borrow_mut().resume();
-                        set_paused.set(false);
-                    } else {
-                        // st.borrow_mut().pause();
-                        set_paused.set(true);
-                    }
-                }
+                // "KeyP" is handled above
                 _ => return,
             }
 
@@ -636,4 +732,172 @@ fn main() {
 #[allow(unused)]
 fn clear_screen() {
     print!("\x1b[2J");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Make items from outer module available
+
+    fn count_blocks_at_line(tetris: &Tetris, line_y: i32) -> usize {
+        tetris
+            .fixed_blocks
+            .iter()
+            .flat_map(|t| t.collect_positions())
+            .filter(|p| p.1 == line_y)
+            .count()
+    }
+
+    fn get_block_positions(tetris: &Tetris) -> HashSet<Position> {
+        tetris
+            .fixed_blocks
+            .iter()
+            .flat_map(|t| t.collect_positions())
+            .collect()
+    }
+
+    #[test]
+    fn test_line_clearing_animation() {
+        let width = 10;
+        let height = 5;
+        let mut tetris = Tetris::new(width, height);
+        tetris.current_tetromino = None; // Ensure no interference
+        tetris.fixed_blocks.clear();
+        tetris.score = 0; // Reset score
+
+        // 1. Setup: Add a block above the line to be cleared, to test shifting
+        let shifting_block_orig_pos = Position(0, height as i32 - 2); // e.g., (0,3)
+        tetris.fixed_blocks.push(Tetromino {
+            kind: "S", // Shifting block
+            data: TetrominoData {
+                position: shifting_block_orig_pos,
+                data: [Position(0,0)].into(),
+            },
+            rotation: 0,
+        });
+
+        // Fill the bottom-most line (line_y = height - 1)
+        let line_to_clear_y = height as i32 - 1; // e.g., line 4 for height 5
+        for i in 0..width {
+            tetris.fixed_blocks.push(Tetromino {
+                kind: "I", // Immovable line block
+                data: TetrominoData {
+                    position: Position(i as i32, line_to_clear_y),
+                    data: [Position(0,0)].into(),
+                },
+                rotation: 0,
+            });
+        }
+
+        assert_eq!(
+            tetris.fixed_blocks.len(),
+            width as usize + 1,
+            "Initial fixed_blocks count"
+        );
+        assert!(
+            get_block_positions(&tetris).contains(&shifting_block_orig_pos),
+            "Shifting block should be present before clear"
+        );
+        assert_eq!(
+            count_blocks_at_line(&tetris, line_to_clear_y),
+            width as usize,
+            "Line to clear should be full before clear"
+        );
+
+        // 2. Call tetris.clear_lines()
+        tetris.clear_lines();
+
+        assert_eq!(
+            tetris.lines_being_cleared,
+            Some(vec![line_to_clear_y as usize]),
+            "lines_being_cleared should contain the cleared line index"
+        );
+        assert_eq!(tetris.animation_step, 0, "animation_step should be 0 after clear_lines");
+        assert_eq!(tetris.score, 1, "Score should be 1 after one line detected");
+        
+        // Assert blocks are not yet removed and shifting block hasn't shifted
+        assert_eq!(
+            tetris.fixed_blocks.len(),
+            width as usize + 1,
+            "fixed_blocks count should be unchanged after clear_lines (before ticks)"
+        );
+        assert!(
+            get_block_positions(&tetris).contains(&shifting_block_orig_pos),
+            "Shifting block should still be at original position after clear_lines"
+        );
+         assert_eq!(
+            count_blocks_at_line(&tetris, line_to_clear_y),
+            width as usize,
+            "Line to clear should still be full after clear_lines (before ticks)"
+        );
+
+
+        // 3. Call tetris.tick() for ANIMATION_DURATION - 1 times
+        for i in 0..(ANIMATION_DURATION - 1) {
+            tetris.tick();
+            assert_eq!(
+                tetris.animation_step,
+                i + 1,
+                "animation_step should increment with each tick"
+            );
+            assert_eq!(
+                tetris.lines_being_cleared,
+                Some(vec![line_to_clear_y as usize]),
+                "lines_being_cleared should remain Some during animation"
+            );
+            // Blocks should conceptually still be there (or flashing)
+            assert_eq!(
+                tetris.fixed_blocks.len(),
+                width as usize + 1,
+                "fixed_blocks count should be unchanged during animation ticks"
+            );
+             assert!(
+                get_block_positions(&tetris).contains(&shifting_block_orig_pos),
+                "Shifting block should not move during animation ticks"
+            );
+        }
+
+        // 4. Call tetris.tick() one more time (total ANIMATION_DURATION times)
+        tetris.tick();
+
+        assert_eq!(
+            tetris.lines_being_cleared, None,
+            "lines_being_cleared should be None after animation finishes"
+        );
+        assert_eq!(tetris.animation_step, 0, "animation_step should reset after animation");
+        
+        // Assert line is cleared
+        assert_eq!(
+            count_blocks_at_line(&tetris, line_to_clear_y),
+            0,
+            "Cleared line should be empty after animation"
+        );
+
+        // Assert block above shifted down
+        let shifted_block_new_pos = Position(shifting_block_orig_pos.0, shifting_block_orig_pos.1 + 1);
+        let current_positions = get_block_positions(&tetris);
+        assert!(
+            current_positions.contains(&shifted_block_new_pos),
+            "Shifting block should have moved down to {:?}, current positions: {:?}",
+            shifted_block_new_pos,
+            current_positions
+        );
+        assert!(
+            !current_positions.contains(&shifting_block_orig_pos),
+            "Shifting block should not be at its original position"
+        );
+        
+        // Assert only the shifted block remains
+        assert_eq!(
+            tetris.fixed_blocks.len(),
+            1,
+            "Only the shifted block should remain in fixed_blocks"
+        );
+        assert_eq!(tetris.fixed_blocks[0].kind, "S", "The remaining block should be the shifter");
+
+        // Check if clear_lines is called again and if it finds any new lines (it shouldn't)
+        let old_score = tetris.score;
+        tetris.clear_lines();
+        assert_eq!(tetris.lines_being_cleared, None, "No new lines should be found immediately after");
+        assert_eq!(tetris.score, old_score, "Score should not change if no new lines are cleared");
+    }
 }
