@@ -143,3 +143,123 @@ Based on the project configuration (e.g., `"targets": "all"` in the `tauri.conf.
 This project serves as a demonstration of building a web-based game with Rust, Leptos, and Tauri, showcasing how these technologies can be combined to create engaging applications.
 
 We hope you enjoy playing!
+
+---
+
+## Tetris Gymnasium Environment for Reinforcement Learning
+
+This project also includes a [Gymnasium](https://gymnasium.farama.org/) environment, allowing you to train reinforcement learning (RL) agents to play Tetris. The core Tetris game logic is implemented in Rust for performance, and the Python environment interfaces with this compiled Rust core.
+
+### Overview
+
+The `TetrisEnv` class, found in `tetris_env.py`, provides a standard Gymnasium API for interacting with the Tetris game. This allows researchers and developers to easily apply various RL algorithms to learn Tetris strategies.
+
+### Prerequisites
+
+To use the Tetris Gymnasium environment, you'll need:
+
+*   **Rust Toolchain:**
+    *   Install Rust and Cargo from [https://rustup.rs/](https://rustup.rs/).
+    *   Ensure `cargo` is in your system's PATH.
+*   **Python:**
+    *   Python 3.8 or newer is recommended.
+    *   `pip` (Python's package installer) is required.
+
+### Building the Rust Core
+
+The Rust core of the Tetris game needs to be compiled into a dynamic library (e.g., `.so` on Linux, `.dll` on Windows, `.dylib` on macOS) so that the Python environment can call it.
+
+1.  **Navigate to the project root directory** (where `Cargo.toml` is located).
+2.  **Build the library using Cargo:**
+    *   For a debug build (faster compilation, not optimized):
+        ```bash
+        cargo build
+        ```
+    *   For a release build (slower compilation, optimized for performance):
+        ```bash
+        cargo build --release
+        ```
+3.  **Locate the compiled library:**
+    *   The library will be named `libtetris_core.so` (Linux), `tetris_core.dll` (Windows), or `libtetris_core.dylib` (macOS).
+    *   It will be located in:
+        *   `target/debug/` for debug builds.
+        *   `target/release/` for release builds.
+
+    The `tetris_env.py` script attempts to find this library automatically, assuming it's in `target/debug/` relative to the project root.
+
+### Setting up the Python Environment
+
+1.  **Create and activate a virtual environment (recommended):**
+    Open your terminal in the project root directory and run:
+    ```bash
+    python -m venv .venv
+    # On Linux/macOS:
+    source .venv/bin/activate
+    # On Windows (Command Prompt):
+    # .venv\Scripts\activate.bat
+    # On Windows (PowerShell):
+    # .venv\Scripts\Activate.ps1
+    ```
+2.  **Install Python dependencies:**
+    With your virtual environment activated, install the required packages:
+    ```bash
+    pip install gymnasium numpy
+    ```
+
+### Running the Environment (Python Example)
+
+The following Python script demonstrates how to import and use the `TetrisEnv`. Ensure that the compiled Rust library is discoverable (e.g., by being in `target/debug/` or `target/release/`, or by providing the `lib_path` argument to `TetrisEnv`).
+
+```python
+from tetris_env import TetrisEnv
+import gymnasium as gym # Ensure gymnasium is imported if not within TetrisEnv's example
+
+# The TetrisEnv will attempt to find the compiled library in standard locations
+# (e.g., ./target/debug/libtetris_core.so).
+# If your library is elsewhere, provide the path:
+# env = TetrisEnv(lib_path="path/to/your/target/debug_or_release/library_file")
+env = TetrisEnv() 
+
+obs, info = env.reset()
+terminated = False
+total_reward = 0
+
+print(f"Starting Tetris RL Environment. Observation shape: {obs.shape}")
+
+for step in range(1000): # Run for a maximum of 1000 steps
+    action = env.action_space.sample()  # Replace with your agent's action
+    
+    obs, reward, terminated, truncated, info = env.step(action)
+    total_reward += reward
+    
+    # Optional: Render the environment
+    # env.render() 
+    # import time; time.sleep(0.05) # Slow down for human viewing if rendering
+
+    if (step + 1) % 100 == 0:
+        print(f"Step: {step + 1}, Score: {info.get('score', 0)}, Total Reward: {total_reward:.2f}")
+
+    if terminated or truncated:
+        print(f"Episode finished after {step + 1} steps.")
+        print(f"Final Score: {info.get('score', 0)}, Total Reward for episode: {total_reward:.2f}")
+        
+        # Reset for the next episode
+        obs, info = env.reset()
+        total_reward = 0 
+        # if you want to stop after one episode, add a break here
+        # break 
+
+env.close()
+print("Environment closed.")
+```
+
+### Running Tests
+
+Unit tests for the Python environment are located in `test_tetris_env.py`. To run them:
+
+1.  Ensure the Rust library is built (e.g., `cargo build`).
+2.  Ensure Python dependencies are installed.
+3.  Run the tests from the project root directory:
+    ```bash
+    python -m unittest test_tetris_env.py
+    ```
