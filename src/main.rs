@@ -129,7 +129,7 @@ fn TetrisGame(
                 "ArrowUp" => st.borrow_mut().rotate(),
                 "ArrowLeft" => st.borrow_mut().move_left(),
                 "ArrowRight" => st.borrow_mut().move_right(),
-                "ArrowDown" => st.borrow_mut().tick(), 
+                "ArrowDown" => st.borrow_mut().tick(),
                 "Space" => st.borrow_mut().speed_up(),
                 _ => return,
             }
@@ -285,7 +285,7 @@ mod tests {
         let width = 10;
         let height = 5;
         let mut tetris = Tetris::new(width, height); // tetris_core::Tetris
-        tetris.current_tetromino = None; 
+        tetris.current_tetromino = None;
         tetris.fixed_blocks.clear();
         tetris.score = 0;
 

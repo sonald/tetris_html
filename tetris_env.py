@@ -41,7 +41,7 @@ class TetrisEnv(gym.Env):
             self.lib_path = os.path.join(base_path, lib_name)
         else:
             self.lib_path = lib_path
-        
+
         if not os.path.exists(self.lib_path):
             raise OSError(f"Tetris library not found at {self.lib_path}. "
                           "Ensure the Rust code is compiled and the path is correct.")
@@ -61,7 +61,7 @@ class TetrisEnv(gym.Env):
         )
 
         # Initial reset to set up state
-        # obs, info = self.reset() 
+        # obs, info = self.reset()
         # print(f"Initial state: obs shape {obs.shape}, info {info}")
 
 
@@ -97,16 +97,16 @@ class TetrisEnv(gym.Env):
         if not self.game_ptr:
             # Return a zeroed observation if game_ptr is None, e.g. after close()
             return np.zeros(shape=(self.height, self.width), dtype=np.uint8)
-            
+
         board_size = self.height * self.width
         # Create a flat buffer for the board data
         board_buffer = (ctypes.c_uint8 * board_size)()
-        
+
         self.rust_lib.tetris_get_board(
-            self.game_ptr, 
+            self.game_ptr,
             board_buffer # ctypes automatically converts array to pointer
         )
-        
+
         # Convert the ctypes array to a NumPy array and reshape
         obs = np.ctypeslib.as_array(board_buffer).reshape(self.height, self.width)
         return obs.copy() # Return a copy to avoid issues with buffer reuse
@@ -132,13 +132,13 @@ class TetrisEnv(gym.Env):
             raise ConnectionError("Rust game instance not available. Cannot reset.")
 
         self.rust_lib.tetris_reset(self.game_ptr)
-        
+
         observation = self._get_obs()
         info = self._get_info()
-        
+
         if self.render_mode == "human":
             self.render()
-            
+
         return observation, info
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict]:
@@ -147,17 +147,17 @@ class TetrisEnv(gym.Env):
 
         # Get current score for reward calculation
         prev_game_state = self.rust_lib.tetris_get_game_state(self.game_ptr)
-        
+
         # Perform the action
         new_game_state_struct = self.rust_lib.tetris_step(self.game_ptr, ctypes.c_uint32(action))
-        
+
         observation = self._get_obs()
         terminated = new_game_state_struct.lost
-        
+
         # Reward calculation
         # Basic reward: score difference. Penalty for losing. Small penalty per step.
         reward = float(new_game_state_struct.score - prev_game_state.score)
-        
+
         # Check if score is based on lines cleared (e.g. 1 point per line)
         # If lines_cleared = new_game_state.score - prev_game_state.score,
         # then reward can be lines_cleared ** 2 or similar for super-linear reward.
@@ -169,14 +169,14 @@ class TetrisEnv(gym.Env):
         #    reward = float(lines_cleared ** 2) # e.g. 1, 4, 9, 16 for 1,2,3,4 lines
         # else:
         #    reward = 0.0 # No lines cleared
-        
+
         reward -= 0.01 # Small penalty per step to encourage efficiency
 
         if terminated:
             reward -= 100.0 # Large penalty for losing
 
         truncated = False # Tetris typically doesn't truncate early unless a step limit is imposed
-        
+
         info = {
             "score": new_game_state_struct.score,
             "lost": new_game_state_struct.lost,
@@ -186,7 +186,7 @@ class TetrisEnv(gym.Env):
 
         if self.render_mode == "human":
             self.render()
-            
+
         return observation, reward, terminated, truncated, info
 
     def render(self):
@@ -224,20 +224,20 @@ if __name__ == '__main__':
     # Example usage:
     # Ensure the .so/.dll/.dylib is in target/debug/ relative to this script, or provide full path.
     # For example, if tetris_env.py is in the root of your Rust project, and the lib is in target/debug.
-    
+
     # Determine the path to the library dynamically based on script location
     # Assumes the script is in the root of the project.
     script_dir = os.path.dirname(os.path.abspath(__file__))
     default_lib_path = None
-    
+
     # Construct path assuming 'target/debug/' relative to the script's directory
     # This is a common setup if the Python script is in the root of the Rust project
     rust_project_root = script_dir # Assuming script is at project root
-    
+
     # More robust: try to find target/debug relative to current working directory if it's the project root
     # Or expect user to set an environment variable or pass it.
     # For now, let's assume target/debug is in the same directory as the script or one level up if script is in a 'scripts' folder
-    
+
     # Try a common path structure: <project_root>/target/debug/libtetris_core.so
     # If tetris_env.py is at project_root:
     path_to_target_debug = os.path.join(rust_project_root, "target", "debug")
@@ -254,7 +254,7 @@ if __name__ == '__main__':
 
     if default_lib_path and os.path.exists(default_lib_path):
         env = TetrisEnv(lib_path=default_lib_path, render_mode='human')
-        
+
         obs, info = env.reset()
         print(f"Initial Observation:\n{obs}")
         print(f"Initial Info: {info}")
@@ -268,7 +268,7 @@ if __name__ == '__main__':
                 obs, reward, terminated, truncated, info = env.step(action)
                 total_reward += reward
                 steps +=1
-                
+
                 # env.render() # Already called in step if render_mode='human'
                 import time
                 time.sleep(0.1) # Slow down for human viewing

@@ -25,7 +25,7 @@ class TestTetrisEnv(unittest.TestCase):
         # This path should align with where `cargo build` places the dynamic library.
         # If tetris_env.py is also in the root, this path structure is consistent with TetrisEnv's default.
         self.lib_path = os.path.join(os.getcwd(), "target", "debug", lib_name)
-        
+
         if not os.path.exists(self.lib_path):
             # Attempt to build the library if it's missing, useful for CI/first run
             # This assumes `cargo` is in PATH and the current working directory is the project root.
@@ -83,18 +83,18 @@ class TestTetrisEnv(unittest.TestCase):
         self.env.reset()
         for action in range(self.env.action_space.n): # Test all possible actions
             obs, reward, terminated, truncated, info = self.env.step(action)
-            
+
             self.assertIsInstance(obs, np.ndarray)
             self.assertEqual(obs.shape, self.env.observation_space.shape)
             self.assertEqual(obs.dtype, self.env.observation_space.dtype)
-            
+
             self.assertIsInstance(reward, float)
             self.assertIsInstance(terminated, bool)
             self.assertIsInstance(truncated, bool)
             self.assertIsInstance(info, dict)
             self.assertIn("score", info)
             self.assertIn("lost", info)
-            
+
             if terminated: # If game ends early, no need to continue testing all actions
                 break
 
@@ -102,7 +102,7 @@ class TestTetrisEnv(unittest.TestCase):
         """Test a short rollout with random actions."""
         obs, info = self.env.reset()
         max_steps = 25 # Increased steps to have higher chance of game events
-        
+
         for i in range(max_steps):
             action = self.env.action_space.sample()
             obs, reward, terminated, truncated, info = self.env.step(action)
@@ -155,14 +155,14 @@ class TestTetrisEnv(unittest.TestCase):
             last_reward = reward
             if not terminated:
                 total_reward_before_loss += reward
-            
+
             if terminated:
                 # print(f"Game over detected at step {i+1}. Last reward: {last_reward}, Info: {info}")
                 # Expecting a significant penalty for losing.
                 # The specific value (-100.0) comes from TetrisEnv's reward logic.
                 self.assertTrue(reward <= -100.0, f"Reward on game over should be <= -100, got {reward}")
                 break
-        
+
         self.assertTrue(terminated, "Game did not terminate within the given steps for game_over test.")
 
 if __name__ == '__main__':

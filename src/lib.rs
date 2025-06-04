@@ -7,7 +7,7 @@ use std::{
     collections::HashSet,
     ops::{Add, Sub},
 };
-use wasm_bindgen::prelude::*; // For JsValue, etc. if needed by console_log or other web_sys features
+// use wasm_bindgen::prelude::*; // For JsValue, etc. if needed by console_log or other web_sys features
 use web_sys::window; // Used in Tetris::tick and Tetris::clear_lines for performance.now()
 
 // It's good practice to make only necessary items public.
@@ -302,12 +302,12 @@ impl Tetris {
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
-                 animation_over = true; 
+                 animation_over = true;
             }
 
             if animation_over {
                 let mut mutable_lines_to_clear = lines_to_clear_vec.clone();
-                mutable_lines_to_clear.sort_by_key(|&k| Reverse(k)); 
+                mutable_lines_to_clear.sort_by_key(|&k| Reverse(k));
 
                 for line_index_usize in &mutable_lines_to_clear {
                     let line_index_i32 = *line_index_usize as i32;
@@ -329,7 +329,7 @@ impl Tetris {
                 self.fixed_blocks.retain(|block| !block.data.data.is_empty());
                 self.lines_being_cleared = None;
                 self.animation_start_time = None;
-                self.clear_lines(); 
+                self.clear_lines();
             }
         } else {
             self.move_down();
@@ -407,7 +407,7 @@ impl Tetris {
             console_log(&format!("full_lines: {:?}", full_lines));
             #[cfg(not(target_arch = "wasm32"))]
             println!("full_lines: {:?}", full_lines);
-            
+
             self.score += full_lines.len() as i32;
             self.lines_being_cleared = Some(full_lines);
 
@@ -431,7 +431,7 @@ impl Tetris {
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
-                self.animation_start_time = Some(0.0); 
+                self.animation_start_time = Some(0.0);
             }
         }
     }
@@ -461,9 +461,9 @@ impl Tetris {
     }
 
     pub fn udpate_ghost(&mut self) {
-        if self.current_tetromino.is_none() { 
+        if self.current_tetromino.is_none() {
             self.ghost_tetromino = None;
-            return; 
+            return;
         }
         let mut next = self.current_tetromino.clone().unwrap();
         loop {
@@ -527,39 +527,37 @@ pub struct GameState {
 }
 
 #[no_mangle]
-pub extern "C" fn tetris_create(width: u32, height: u32) -> *mut Tetris {
+pub unsafe extern "C" fn tetris_create(width: u32, height: u32) -> *mut Tetris {
     let tetris = Tetris::new(width, height);
     Box::into_raw(Box::new(tetris))
 }
 
 #[no_mangle]
-pub extern "C" fn tetris_destroy(ptr: *mut Tetris) {
+pub unsafe extern "C" fn tetris_destroy(ptr: *mut Tetris) {
     if ptr.is_null() {
         return;
     }
-    unsafe {
-        let _ = Box::from_raw(ptr);
-    }
+    // unsafe block already present for Box::from_raw
+    let _ = Box::from_raw(ptr);
 }
 
 #[no_mangle]
-pub extern "C" fn tetris_reset(ptr: *mut Tetris) {
+pub unsafe extern "C" fn tetris_reset(ptr: *mut Tetris) {
     if ptr.is_null() {
         return;
     }
-    unsafe {
-        //let tetris = &mut *ptr; // Original tetris to get width/height
-        let new_tetris_instance = Tetris::new((*ptr).width, (*ptr).height);
-        std::ptr::write(ptr, new_tetris_instance);
-    }
+    // unsafe block already present for ptr write and dereference
+    let new_tetris_instance = Tetris::new((*ptr).width, (*ptr).height);
+    std::ptr::write(ptr, new_tetris_instance);
 }
 
 #[no_mangle]
-pub extern "C" fn tetris_get_game_state(ptr: *const Tetris) -> GameState {
+pub unsafe extern "C" fn tetris_get_game_state(ptr: *const Tetris) -> GameState {
     if ptr.is_null() {
         return GameState { score: 0, lost: true, width: 0, height: 0 };
     }
-    let tetris = unsafe { &*ptr };
+    // unsafe block already present for ptr dereference
+    let tetris = &*ptr;
     GameState {
         score: tetris.get_score(),
         lost: tetris.lost,
@@ -569,47 +567,46 @@ pub extern "C" fn tetris_get_game_state(ptr: *const Tetris) -> GameState {
 }
 
 #[no_mangle]
-pub extern "C" fn tetris_get_board(ptr: *const Tetris, out_board_buffer: *mut u8) {
+pub unsafe extern "C" fn tetris_get_board(ptr: *const Tetris, out_board_buffer: *mut u8) {
     if ptr.is_null() || out_board_buffer.is_null() {
         return;
     }
-    let tetris = unsafe { &*ptr };
-    let board_view = tetris.render_view(); 
+    // unsafe block already present for ptr dereference and buffer write
+    let tetris = &*ptr;
+    let board_view = tetris.render_view();
 
     let mut buffer_idx = 0;
     for r in 0..tetris.height as usize {
         for c in 0..tetris.width as usize {
-            // Ensure board_view access is within bounds if tetris dimensions can change
-            // or if render_view might return non-rectangular/smaller views.
-            // Assuming render_view always returns height x width.
             let cell = board_view[r][c];
             let val = match cell {
-                "B" | "G" => 0, 
-                _ => 1,         
+                "B" | "G" => 0,
+                _ => 1,
             };
-            unsafe {
-                *out_board_buffer.add(buffer_idx) = val;
-            }
+            *out_board_buffer.add(buffer_idx) = val;
             buffer_idx += 1;
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tetris_step(ptr: *mut Tetris, action: u32) -> GameState {
+pub unsafe extern "C" fn tetris_step(ptr: *mut Tetris, action: u32) -> GameState {
     if ptr.is_null() {
         return GameState { score: 0, lost: true, width: 0, height: 0 };
     }
-    let tetris = unsafe { &mut *ptr };
+    // unsafe block already present for ptr dereference
+    let tetris = &mut *ptr;
 
     match action {
         0 => tetris.move_left(),
         1 => tetris.move_right(),
         2 => tetris.rotate(),
-        3 => tetris.speed_up(), 
-        4 => tetris.tick(),     
+        3 => tetris.speed_up(),
+        4 => tetris.tick(),
         _ => {}
     }
+    // Call to another unsafe extern "C" function, or rely on its own internal unsafety.
+    // For consistency, the call itself isn't in an unsafe block here as tetris_get_game_state handles its own ptr.
     tetris_get_game_state(ptr as *const Tetris)
 }
 
