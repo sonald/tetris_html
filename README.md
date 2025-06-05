@@ -218,7 +218,7 @@ import gymnasium as gym # Ensure gymnasium is imported if not within TetrisEnv's
 # (e.g., ./target/debug/libtetris_core.so).
 # If your library is elsewhere, provide the path:
 # env = TetrisEnv(lib_path="path/to/your/target/debug_or_release/library_file")
-env = TetrisEnv() 
+env = TetrisEnv()
 
 obs, info = env.reset()
 terminated = False
@@ -228,12 +228,12 @@ print(f"Starting Tetris RL Environment. Observation shape: {obs.shape}")
 
 for step in range(1000): # Run for a maximum of 1000 steps
     action = env.action_space.sample()  # Replace with your agent's action
-    
+
     obs, reward, terminated, truncated, info = env.step(action)
     total_reward += reward
-    
+
     # Optional: Render the environment
-    # env.render() 
+    # env.render()
     # import time; time.sleep(0.05) # Slow down for human viewing if rendering
 
     if (step + 1) % 100 == 0:
@@ -242,12 +242,12 @@ for step in range(1000): # Run for a maximum of 1000 steps
     if terminated or truncated:
         print(f"Episode finished after {step + 1} steps.")
         print(f"Final Score: {info.get('score', 0)}, Total Reward for episode: {total_reward:.2f}")
-        
+
         # Reset for the next episode
         obs, info = env.reset()
-        total_reward = 0 
+        total_reward = 0
         # if you want to stop after one episode, add a break here
-        # break 
+        # break
 
 env.close()
 print("Environment closed.")
